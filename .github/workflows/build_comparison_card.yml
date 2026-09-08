@@ -1,0 +1,62 @@
+# Builds the daily "tool face-off" comparison card server-side (no browser
+# upload needed) and commits it to this repo, mirroring the pattern already
+# used by build_fortnight3.yml: script is shipped as gzip+base64 to avoid
+# YAML heredoc indentation issues, then run, then committed with the
+# workflow's own GITHUB_TOKEN.
+#
+# Dispatch this with cards_json (see build_comparison_card.py's docstring for
+# the expected shape) and output_path (e.g. Comparisons/2026-09-08.png).
+# Once this completes, dispatch post_comparison.yml in aitoolindex-bot with
+# the same output_path to actually publish the post.
+
+name: Build Comparison Card
+
+on:
+  workflow_dispatch:
+    inputs:
+      cards_json:
+        description: "Full cards JSON payload: title, subtitle, tools[], verified_date"
+        required: true
+        type: string
+      output_path:
+        description: "Path to save the PNG inside this repo, e.g. Comparisons/2026-09-08.png"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Pillow and Poppins fonts
+        run: |
+          pip install Pillow
+          sudo mkdir -p /usr/share/fonts/truetype/google-fonts
+          sudo cp _fonts/Poppins-Bold.ttf _fonts/Poppins-Medium.ttf /usr/share/fonts/truetype/google-fonts/
+
+      - name: Write build script
+        run: "echo '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' | base64 -d | gunzip > build_comparison_card.py"
+
+      - name: Write card data and build image
+        env:
+          CARDS_JSON: ${{ inputs.cards_json }}
+          OUTPUT_PATH: ${{ inputs.output_path }}
+        run: |
+          echo "$CARDS_JSON" > card.json
+          mkdir -p "$(dirname "$OUTPUT_PATH")"
+          python3 build_comparison_card.py card.json "$OUTPUT_PATH"
+
+      - name: Commit and push
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --staged --quiet || (git commit -m "Add daily comparison card" && git push)
