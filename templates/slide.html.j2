@@ -1,0 +1,75 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>{{ fonts|safe }}
+{{ css|safe }}</style>
+</head>
+<body>
+<div class="slide {{ fmt }} {% if s.inverted %}inverted{% endif %} {% if s.kind == 'cta' %}cta{% endif %}">
+  <div class="rule"></div>
+
+  {% if s.kind == 'cover' %}
+    <div class="tag">{{ s.tag }}</div>
+    <div class="grow center-v"><div class="display fit" data-min="64">{{ s.text }}</div></div>
+    <div class="checked">{{ s.note }}</div>
+
+  {% elif s.kind == 'statement' %}
+    <div class="label">{{ s.label }}</div>
+    <div class="grow center-v"><div class="headline fit" data-min="48">{{ s.text }}</div>
+      {% if s.sub %}<div class="spacer-m"></div><div class="body muted">{{ s.sub }}</div>{% endif %}</div>
+
+  {% elif s.kind == 'tool' %}
+    <div class="label">{{ s.label }}</div>
+    <div class="grow center-v">
+      <div class="display fit" data-min="64">{{ s.name }}</div>
+      <div class="spacer-m"></div>
+      <div class="body">{{ s.line }}</div>
+      <div class="spacer-m"></div>
+      <div class="headline big-num" style="font-size:60px">{{ s.price }}</div>
+      <div class="spacer-s"></div>
+      <div class="body muted" style="font-size:34px">{{ s.site }}</div>
+    </div>
+    <div class="checked dark">{{ s.note }}</div>
+
+  {% elif s.kind == 'steps' %}
+    <div class="label">{{ s.label }}</div>
+    <div class="grow center-v fit" data-min="34">
+      <ol class="steps">{% for st in s.steps %}<li><b>{{ "%02d"|format(loop.index) }}</b><span>{{ st }}</span></li>{% endfor %}</ol>
+    </div>
+
+  {% elif s.kind == 'code' %}
+    <div class="label">{{ s.label }}</div>
+    <div class="grow"><div class="box mono fit" data-min="22" style="flex:1">{{ s.text }}</div></div>
+    {% if s.note %}<div class="checked dark" style="margin-top:28px">{{ s.note }}</div>{% endif %}
+
+  {% elif s.kind == 'output' %}
+    <div class="label">{{ s.label }}</div>
+    <div class="grow"><div class="box soft fit" data-min="24" style="flex:1; font-size:36px; line-height:1.4; white-space:pre-wrap">{{ s.text }}</div></div>
+
+  {% elif s.kind == 'cta' %}
+    <div class="display">{{ s.text }}</div>
+    {% if s.sub %}<div class="spacer-m"></div><div class="body muted">{{ s.sub }}</div>{% endif %}
+    <div class="pill">{{ s.pill }}</div>
+  {% endif %}
+
+  <div class="foot"><span>@aitoolindex</span><span>{{ "%02d"|format(n) }} / {{ "%02d"|format(total) }}</span></div>
+</div>
+<script>
+// Shrink any .fit block until it fits its box (no overflow, no clipped words).
+async function fitAll() {
+  await document.fonts.ready;
+  for (const el of document.querySelectorAll('.fit')) {
+    const min = parseFloat(el.dataset.min || 20);
+    let size = parseFloat(getComputedStyle(el).fontSize);
+    const box = el.parentElement.classList.contains('grow') && !el.classList.contains('box') ? el.parentElement : el;
+    let guard = 0;
+    while ((box.scrollHeight > box.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1) && size > min && guard++ < 80) {
+      size -= 2; el.style.fontSize = size + 'px';
+      el.querySelectorAll('li').forEach(li => li.style.fontSize = size + 'px');
+    }
+    if (box.scrollHeight > box.clientHeight + 1) document.body.dataset.overflow = (document.body.dataset.overflow || '') + ' ' + el.className;
+  }
+  document.body.dataset.ready = '1';
+}
+fitAll();
+</script>
+</body></html>

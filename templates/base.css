@@ -1,0 +1,55 @@
+/* @aitoolindex editorial system (locked 12 Sep 2026, aitoolindex_CHANNEL_SETTINGS.md).
+   Type and space only: no photos, no AI illustration, no gradients, no glow.
+   Slide 1 inverted, every other slide on paper. One accent per slide. */
+:root {
+  --paper: #F4F1EA;
+  --ink: #14110F;
+  --muted: #8A8078;
+  --accent: #FF4A1C;            /* overridden per format */
+  --side: 96px; --top: 140px; --bottom: 180px;
+}
+.prompt   { --accent: #FF4A1C; }
+.teardown { --accent: #0F6E63; }
+.update   { --accent: #C9871A; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 1080px; height: 1350px; }
+body {
+  background: var(--paper); color: var(--ink);
+  font-family: "Inter", sans-serif; font-weight: 500;
+  -webkit-font-smoothing: antialiased; overflow: hidden;
+}
+.slide { position: relative; width: 1080px; height: 1350px; padding: var(--top) var(--side) var(--bottom); display: flex; flex-direction: column; }
+.slide.inverted { background: var(--ink); color: var(--paper); }
+
+/* persistent brand marks */
+.rule { position: absolute; top: 96px; left: var(--side); width: 120px; height: 4px; background: var(--accent); }
+.tag { font: 600 26px/1 "Inter"; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin-bottom: 40px; }
+.foot { position: absolute; left: var(--side); right: var(--side); bottom: 84px; display: flex; justify-content: space-between; font: 500 26px/1 "Inter"; color: var(--muted); }
+.inverted .foot { color: #A79E96; }
+
+/* type scale */
+.display { font-family: "Archivo Black", sans-serif; font-weight: 400; font-size: 112px; line-height: 0.95; letter-spacing: -0.02em; }
+.headline { font-family: "Archivo Black", sans-serif; font-weight: 400; font-size: 76px; line-height: 1.0; letter-spacing: -0.02em; }
+.body { font-size: 44px; line-height: 1.35; }
+.body.muted { color: var(--muted); }
+.label { font: 600 26px/1 "Inter"; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin-bottom: 28px; }
+.mono { font-family: "JetBrains Mono", monospace; font-size: 32px; line-height: 1.45; white-space: pre-wrap; }
+.checked { font: 500 26px/1.3 "Inter"; color: #A79E96; margin-top: auto; }
+.checked.dark { color: var(--muted); }
+
+/* layout helpers */
+.grow { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.center-v { justify-content: center; }
+.fit { overflow: hidden; }
+.box { border: 3px solid var(--ink); padding: 40px 44px; background: #FFFDF8; }
+.box.soft { border-color: #D8D1C6; }
+.steps { list-style: none; counter-reset: s; }
+.steps li { display: flex; gap: 36px; align-items: baseline; margin-bottom: 48px; font-size: 46px; line-height: 1.3; }
+.steps li b { flex: 0 0 96px; font-family: "Archivo Black"; font-weight: 400; font-size: 1.25em; color: var(--accent); }
+.steps li span { flex: 1; }
+.big-num { font-family: "Archivo Black"; color: var(--accent); }
+.cta { align-items: center; justify-content: center; text-align: center; }
+.cta .display { font-size: 96px; }
+.pill { display: inline-block; margin-top: 56px; padding: 22px 40px; border-radius: 999px; background: var(--accent); color: var(--paper); font: 700 34px/1 "Inter"; }
+.spacer-s { height: 28px; } .spacer-m { height: 56px; }

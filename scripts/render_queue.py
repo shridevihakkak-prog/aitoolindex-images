@@ -1,181 +1,161 @@
 """Render carousel slides for every entry in tool_data/queue.json.
 
 Single source of truth: tool_data/queue.json. Each entry renders to
-Queue/<Id>_<Slug>/Slide_1..8.jpg. Queue/manifest.json records a hash of the
-data each folder was rendered from, so an entry is re-rendered whenever its
-data changes (e.g. the weekly review updates a price and its LastChecked date)
-and the poster can refuse to publish slides that are out of date.
+Queue/<Id>_<Slug>/Slide_N.jpg at 1080x1350 (4:5). Queue/manifest.json records a
+hash of the data each folder was rendered from, so an entry is re-rendered
+whenever its data changes (e.g. the weekly review updates a price and its
+LastChecked date) and the poster can refuse to publish out-of-date slides.
 
-Slide design is the Fortnight 3 design, plus a "last checked" date on the
-cover and the pricing slide.
+Design lives in templates/base.css + templates/slide.html.j2 (HTML/CSS rendered
+with headless Chromium via Playwright). Change the CSS and bump RENDER_VERSION
+in queue_common.py to restyle every unposted carousel.
 
-Usage: python scripts/render_queue.py [--force]
+Usage: python scripts/render_queue.py [--force] [--only Q0042,Q0043] [--out DIR]
 """
-import datetime, json, os, re, sys
-from PIL import Image, ImageDraw, ImageFont
-from queue_common import QUEUE, OUT_ROOT, MANIFEST, RENDER_FIELDS, folder_for, data_hash, nice_date
+import argparse, base64, datetime, json, os, sys
+from pathlib import Path
 
-W, H = 1080, 1080
-BLACK=(0,0,2); WHITE=(255,255,255); GOLD=(242,222,156)
-BLUE=(37,84,181); BLUE2=(24,120,243); DIM=(180,180,180)
-SAFE=864; LEFT=(W-SAFE)//2+34; TXT=SAFE-140
-FONT_DIR = os.environ.get("FONT_DIR", "_fonts")
-BOLD = f"{FONT_DIR}/Poppins-Bold.ttf"
-MED = f"{FONT_DIR}/Poppins-Medium.ttf"
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from playwright.sync_api import sync_playwright
 
-def F(p,s): return ImageFont.truetype(p,s)
+from queue_common import (QUEUE, MANIFEST, REQUIRED, fmt, num_slides, folder_for,
+                          data_hash, nice_date)
 
-def wrap(d,t,f,mw):
-    out=[]
-    for para in str(t).split("\n"):
-        if not para.strip(): out.append(""); continue
-        cur=""
-        for w in para.split():
-            tr=(cur+" "+w).strip()
-            if d.textlength(tr,font=f)<=mw or not cur: cur=tr
-            else: out.append(cur); cur=w
-        out.append(cur)
-    return out
+ROOT = Path(__file__).resolve().parent.parent
+TEMPLATES = ROOT / "templates"
+FONTS = [("Archivo Black", "ArchivoBlack-Regular.ttf", "400"),
+         ("Inter", "Inter-Variable.ttf", "100 900"),
+         ("JetBrains Mono", "JetBrainsMono-Variable.ttf", "100 800")]
 
-def base():
-    img=Image.new("RGB",(W,H),BLACK); d=ImageDraw.Draw(img)
-    d.ellipse([W-148,54,W-64,138], outline=WHITE, width=3)
-    f=F(BOLD,30)
-    d.text((W-106-d.textlength("AI",font=f)/2, 79), "AI", font=f, fill=WHITE)
-    for a in (-1,1): d.arc([W-166,44,W-46,148], 20*a, 60*a, fill=WHITE, width=2)
-    return img,d
 
-def handle(d):
-    f=F(MED,26); t="@aitoolindex"; tw=d.textlength(t,font=f); x=(W-tw)/2
-    d.rounded_rectangle([x-26,H-96,x+tw+26,H-46], radius=25, fill=BLUE)
-    d.text((x, H-88), t, font=f, fill=WHITE)
+def font_faces():
+    """Embed the bundled OFL fonts (_fonts/) so rendering never depends on the network."""
+    out = []
+    for family, file, weight in FONTS:
+        b64 = base64.b64encode((ROOT / "_fonts" / file).read_bytes()).decode()
+        out.append(f'@font-face {{ font-family: "{family}"; font-weight: {weight}; font-display: block; '
+                   f'src: url(data:font/ttf;base64,{b64}) format("truetype"); }}')
+    return "\n".join(out)
 
-# block = list of (text, font, fill, line_gap, space_after)
-def measure(d, block):
-    h=0
-    for t,f,c,lg,sa in block:
-        h += len(wrap(d,t,f,TXT))*(f.size+lg) + sa
-    return h
 
-def draw_block(d, block, top=None):
-    total=measure(d,block)
-    y = top if top is not None else max(210,(H-total)//2-40)
-    for t,f,c,lg,sa in block:
-        for ln in wrap(d,t,f,TXT):
-            d.text((LEFT,y),ln,font=f,fill=c); y += f.size+lg
-        y += sa
-    return y
+def lines(text):
+    return [x.split(". ", 1)[-1] if x[:2].strip(".").isdigit() else x
+            for x in (l.strip() for l in str(text).split("\n")) if x]
 
-def save(img,path): img.save(path,"JPEG",quality=92,optimize=True)
 
-def cover(name,path,hook,checked):
-    img,d=base()
-    nf=F(BOLD,92)
-    nlines=wrap(d,name.upper(),nf,TXT)
-    if len(nlines)>2:
-        nf=F(BOLD,72); nlines=wrap(d,name.upper(),nf,TXT)
-    hf=F(MED,40)
-    hlines=wrap(d,hook,hf,TXT-20) if hook else []
-    asc,desc=nf.getmetrics(); nlh=asc+desc
-    hlh=hf.size+16
-    total=nlh*len(nlines)+ (34+3+30 if hlines else 0) + hlh*len(hlines)
-    y=(H-total)//2-70
-    for ln in nlines:
-        d.text(((W-d.textlength(ln,font=nf))/2,y),ln,font=nf,fill=GOLD); y+=nlh
-    if hlines:
-        ry=y+30; d.line([(W/2-90,ry),(W/2+90,ry)],fill=GOLD,width=3); y=ry+34
-        for ln in hlines:
-            d.text(((W-d.textlength(ln,font=hf))/2,y),ln,font=hf,fill=WHITE); y+=hlh
-    tf=F(MED,30)
-    d.text(((W-d.textlength("@aitoolindex",font=tf))/2, 852),"@aitoolindex",font=tf,fill=DIM)
-    cf=F(MED,26); ct=f"Details checked {checked}"
-    d.text(((W-d.textlength(ct,font=cf))/2, 896),ct,font=cf,fill=DIM)
-    sf=F(MED,34); lbl="SWIPE"; lw=d.textlength(lbl,font=sf)
-    gap,shaft=22,78; x=W/2-(lw+gap+shaft)/2; yy=972
-    d.text((x,yy-22),lbl,font=sf,fill=GOLD)
-    ax=x+lw+gap; ay=yy-4
-    d.line([(ax,ay),(ax+shaft,ay)],fill=GOLD,width=5)
-    d.polygon([(ax+shaft+10,ay),(ax+shaft-15,ay-15),(ax+shaft-15,ay+15)],fill=GOLD)
-    save(img,path)
+def slides_for(r):
+    checked = nice_date(r["LastChecked"])
+    if fmt(r) == "prompt":
+        n = int(r["Number"])
+        tag = f"Run this prompt · Day {n:02d}"
+        return [
+            dict(kind="cover", inverted=True, tag=tag, text=r["Hook"],
+                 note=f"Prompt tested {checked} · works in Claude or ChatGPT"),
+            dict(kind="statement", label="Doing it by hand", text=r["Cost"]),
+            dict(kind="code", label="The prompt · copy it", text=r["Prompt"],
+                 note="Replace everything in [BRACKETS] with your own details."),
+            dict(kind="output", label="What you get · example, shortened", text=r["Output"]),
+            dict(kind="statement", label="The upgrade", text=r["Upgrade"],
+                 sub="One extra line that makes the result twice as useful."),
+            dict(kind="cta", text=f"Day {n} of daily prompts.", sub="Save this for the next time you need it.",
+                 pill="Follow for tomorrow's"),
+        ]
+    if fmt(r) == "teardown":
+        pp = [p.strip() for p in str(r["Pricing"]).split("|") if p.strip()]
+        price = r.get("Price") or " · ".join(pp[1:3]) or pp[0]
+        return [
+            dict(kind="cover", inverted=True, tag="Tool teardown", text=r["Hook"],
+                 note=f"Prices and details checked {checked}"),
+            dict(kind="statement", label="The job", text=r["Job"]),
+            dict(kind="tool", label="The tool", name=r["DisplayName"], line=r["ToolLine"],
+                 price=price, site=r["Website"],
+                 note=f"Last checked {checked}. Prices change, so confirm on the official site."),
+            dict(kind="steps", label="Get it done in 3 steps", steps=lines(r["Steps"])[:3]),
+            dict(kind="statement", label="The honest limit", text=r["Limit"]),
+            dict(kind="statement", label="Cheaper option · when it's enough", text=r["Alternative"]),
+            dict(kind="cta", text="Want the other 249?", sub="The full AI Tool Index is linked in the bio.",
+                 pill="Follow @aitoolindex"),
+        ]
+    raise ValueError(f"{r['Id']}: no renderer for format {fmt(r)!r}")
 
-def s_title(r,path):
-    img,d=base()
-    draw_block(d,[(r["ToolName"].upper(),F(BOLD,42),GOLD,12,34),
-                  (r["Hook"],F(BOLD,62),WHITE,16,34),
-                  (r["Description"],F(MED,32),DIM,18,0)])
-    handle(d); save(img,path)
-
-def s_pair(a,av,b,bv,path):
-    img,d=base()
-    draw_block(d,[(a,F(BOLD,50),WHITE,12,14),(av,F(MED,36),DIM,18,58),
-                  (b,F(BOLD,50),WHITE,12,14),(bv,F(MED,36),DIM,18,0)])
-    handle(d); save(img,path)
-
-def s_single(lbl,val,path,ls=58,vs=40,note=None):
-    img,d=base()
-    block=[(lbl,F(BOLD,ls),WHITE,12,26),(val,F(MED,vs),DIM,20,30 if note else 0)]
-    if note: block.append((note,F(MED,28),GOLD,12,0))
-    draw_block(d,block)
-    handle(d); save(img,path)
-
-def s_uses(r,path):
-    img,d=base()
-    items=[x.strip() for x in re.split(r"\n|(?<=\D)(?=[123]\.)", str(r["Uses"])) if x.strip()][:3]
-    block=[("3 Uses",F(BOLD,72),GOLD,14,52)]
-    for it in items: block.append((it,F(MED,38),WHITE,18,34))
-    draw_block(d,block)
-    handle(d); save(img,path)
-
-def s_cta(path):
-    img,d=base()
-    f=F(BOLD,84); y=(H-3*100)//2-70
-    for ln in ["Save for","when you","need it!"]:
-        d.text((LEFT,y),ln,font=f,fill=WHITE); y+=100
-    d.rounded_rectangle([LEFT,y+46,LEFT+256,y+124], radius=39, fill=BLUE2)
-    fb=F(BOLD,32); d.text((LEFT+76,y+68),"SHARE",font=fb,fill=WHITE)
-    handle(d); save(img,path)
-
-def build(r,outdir):
-    os.makedirs(outdir,exist_ok=True)
-    checked=nice_date(r["LastChecked"])
-    cover(r["ToolName"], f"{outdir}/Slide_1.jpg", r["Hook"], checked)
-    s_title(r, f"{outdir}/Slide_2.jpg")
-    s_pair("Tool Category",r["Category"],"Latest Models & Versions",r["Models"], f"{outdir}/Slide_3.jpg")
-    s_uses(r, f"{outdir}/Slide_4.jpg")
-    s_single("Pricing Plan", str(r["Pricing"]).replace(" | ","\n"), f"{outdir}/Slide_5.jpg",
-             note=f"Last checked {checked}. Prices change - confirm on the official site.")
-    s_single("API provided?", r["API"], f"{outdir}/Slide_6.jpg", 64, 46)
-    s_pair("Company",r["Company"],"Official Website",r["Website"], f"{outdir}/Slide_7.jpg")
-    s_cta(f"{outdir}/Slide_8.jpg")
 
 def validate(rows):
-    errs=[]; ids=set()
+    errs, ids = [], set()
     for r in rows:
-        for k in ["Id"]+RENDER_FIELDS:
-            if not str(r.get(k,"")).strip(): errs.append(f"{r.get('Id','?')}: missing {k}")
-        if r.get("Id") in ids: errs.append(f"duplicate Id {r.get('Id')}")
+        f = fmt(r)
+        if f not in REQUIRED:
+            errs.append(f"{r.get('Id','?')}: unknown Format {f!r}"); continue
+        for k in ["Id"] + REQUIRED[f]:
+            if not str(r.get(k, "")).strip():
+                errs.append(f"{r.get('Id','?')}: missing {k}")
+        if r.get("Id") in ids:
+            errs.append(f"duplicate Id {r.get('Id')}")
         ids.add(r.get("Id"))
-        try: datetime.date.fromisoformat(r.get("LastChecked",""))
-        except ValueError: errs.append(f"{r.get('Id')}: LastChecked must be YYYY-MM-DD")
+        if f != "legacy":
+            try: datetime.date.fromisoformat(r.get("LastChecked", ""))
+            except ValueError: errs.append(f"{r.get('Id')}: LastChecked must be YYYY-MM-DD")
+            if len(str(r.get("Hook", "")).split()) > 14:
+                errs.append(f"{r.get('Id')}: Hook is over 14 words")
     return errs
 
+
+def render(rows, out_root, force=False):
+    env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=select_autoescape(["html", "j2"]))
+    tpl = env.get_template("slide.html.j2")
+    css = (TEMPLATES / "base.css").read_text(encoding="utf-8")
+    fonts = font_faces()
+    manifest_path = Path(out_root) / MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    built, problems = 0, []
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={"width": 1080, "height": 1350})
+        for r in rows:
+            if fmt(r) == "legacy":
+                continue
+            folder, h = folder_for(r), data_hash(r)
+            target = Path(out_root) / folder
+            if not force and manifest.get(folder) == h and all(
+                    (target / f"Slide_{n}.jpg").exists() for n in range(1, num_slides(r) + 1)):
+                continue
+            target.mkdir(parents=True, exist_ok=True)
+            specs = slides_for(r)
+            for n, s in enumerate(specs, 1):
+                page.set_content(tpl.render(css=css, fonts=fonts, fmt=fmt(r), s=s, n=n, total=len(specs)),
+                                 wait_until="load")
+                page.wait_for_function("document.body.dataset.ready === '1'", timeout=20000)
+                over = page.evaluate("document.body.dataset.overflow || ''")
+                if over:
+                    problems.append(f"{r['Id']} slide {n}: text overflows ({over.strip()})")
+                page.screenshot(path=str(target / f"Slide_{n}.jpg"), type="jpeg", quality=92)
+            manifest[folder] = h; built += 1
+            print("rendered", folder, h)
+        browser.close()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=1, sort_keys=True), encoding="utf-8")
+    return built, problems
+
+
 def main():
-    force = "--force" in sys.argv
-    rows = json.load(open(QUEUE, encoding="utf-8"))
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--force", action="store_true")
+    ap.add_argument("--only", help="comma-separated Ids")
+    ap.add_argument("--out", default=".", help="render somewhere else (previews)")
+    ap.add_argument("--queue", default=QUEUE)
+    a = ap.parse_args()
+    os.chdir(ROOT)
+    rows = json.loads(Path(a.queue).read_text(encoding="utf-8"))
     errs = validate(rows)
-    if errs: sys.exit("queue.json invalid:\n  " + "\n  ".join(errs))
-    manifest = json.load(open(MANIFEST, encoding="utf-8")) if os.path.exists(MANIFEST) else {}
-    built = 0
-    for r in rows:
-        folder, h = folder_for(r), data_hash(r)
-        if not force and manifest.get(folder) == h and all(
-                os.path.exists(f"{folder}/Slide_{n}.jpg") for n in range(1, 9)):
-            continue
-        build(r, folder); manifest[folder] = h; built += 1
-        print("rendered", folder, h)
-    os.makedirs(OUT_ROOT, exist_ok=True)
-    json.dump(manifest, open(MANIFEST, "w", encoding="utf-8"), indent=1, sort_keys=True)
-    print(f"{built} rendered, {len(rows)} entries in queue")
+    if errs:
+        sys.exit("queue.json invalid:\n  " + "\n  ".join(errs))
+    if a.only:
+        keep = set(a.only.split(","))
+        rows = [r for r in rows if r["Id"] in keep]
+    built, problems = render(rows, a.out, a.force)
+    print(f"{built} rendered, {len(rows)} entries")
+    if problems:
+        sys.exit("Text did not fit:\n  " + "\n  ".join(problems))
+
 
 if __name__ == "__main__":
     main()
